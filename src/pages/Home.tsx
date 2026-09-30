@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { trpc } from "@/providers/trpc";
-import { DEMO_CARDS } from "@/lib/demoData";
+import { useDemoCards } from "@/hooks/useDemoCards";
 import { Button } from "@/components/ui/button";
 
 import { Input } from "@/components/ui/input";
@@ -43,14 +43,11 @@ const deckMeta: Record<Deck, { label: string; who: string; icon: typeof Crown; a
 export default function Home() {
   const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
 
-  // Estado local para demo mode
-  const [demoCards, setDemoCards] = useState<CardRow[]>(
-    DEMO_CARDS.map((c) => ({ id: c.id, deck: c.deck, text: c.text, minSeconds: c.minSeconds, maxSeconds: c.maxSeconds }))
-  );
-  const [nextDemoId, setNextDemoId] = useState(100);
+  // Demo mode: cartas persistidas en localStorage
+  const demo = useDemoCards();
 
   const trpcCards = trpc.cards.list.useQuery(undefined, { enabled: !IS_DEMO });
-  const cards = IS_DEMO ? demoCards : (trpcCards.data ?? []);
+  const cards = IS_DEMO ? demo.cards : (trpcCards.data ?? []);
   const isLoading = IS_DEMO ? false : trpcCards.isLoading;
   const utils = trpc.useUtils();
 
@@ -103,11 +100,9 @@ export default function Home() {
 
     if (IS_DEMO) {
       if (editing) {
-        setDemoCards((prev) => prev.map((c) => (c.id === editing.id ? { ...c, ...payload } : c)));
+        demo.update(editing.id, payload);
       } else {
-        const newCard: CardRow = { id: nextDemoId, ...payload };
-        setDemoCards((prev) => [...prev, newCard]);
-        setNextDemoId((id) => id + 1);
+        demo.create(payload);
       }
       setDialogOpen(false);
       return;
@@ -123,7 +118,7 @@ export default function Home() {
 
   const handleDelete = (id: number) => {
     if (IS_DEMO) {
-      setDemoCards((prev) => prev.filter((c) => c.id !== id));
+      demo.remove(id);
       return;
     }
     deleteMutation.mutate({ id });

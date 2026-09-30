@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { SPECIALS, type SpecialCardDef } from "@/lib/specials";
 import { sfx, buzz } from "@/lib/feedback";
-import { DEMO_CARDS } from "@/lib/demoData";
+import { useDemoCards } from "@/hooks/useDemoCards";
 import RoomGame from "./RoomGame";
 
 type Player = "el" | "ella";
@@ -116,8 +116,9 @@ function PhonePassAnimation({ from, to }: { from: Player; to: Player }) {
 
 export default function Juego() {
   const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+  const demo = useDemoCards();
   const trpcCards = trpc.cards.list.useQuery(undefined, { enabled: !IS_DEMO });
-  const cards = IS_DEMO ? DEMO_CARDS : (trpcCards.data ?? []);
+  const cards = IS_DEMO ? demo.cards : (trpcCards.data ?? []);
   const isLoading = IS_DEMO ? false : trpcCards.isLoading;
 
   const [phase, setPhase] = useState<Phase>("setup");
@@ -171,7 +172,7 @@ export default function Juego() {
   const startGame = () => {
     // Cada uno juega con SU mazo: el Mazo de Él contiene lo que hará Ella.
     // Las 3 cartas especiales van de serie en cada mazo.
-    const build = (list: typeof cards): HandCard[] =>
+    const build = (list: Array<{ id: number; deck: Player; text: string; minSeconds: number | null; maxSeconds: number | null }>): HandCard[] =>
       shuffle([
         ...list.map(
           (c): ActionCard => ({
