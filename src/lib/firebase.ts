@@ -15,13 +15,12 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  // REEMPLAZA ESTO CON TU CONFIGURACION DE FIREBASE:
-  apiKey: "Pega aqui tu apiKey",
-  authDomain: "Pega aqui tu authDomain",
-  projectId: "Pega aqui tu projectId",
-  storageBucket: "Pega aqui tu storageBucket",
-  messagingSenderId: "Pega aqui tu messagingSenderId",
-  appId: "Pega aqui tu appId",
+  apiKey: "AIzaSyAC4Lzvxd-lVQ3b0KM4f4zzTJ6D4zOZ-mo",
+  authDomain: "noche-de-cartas.firebaseapp.com",
+  projectId: "noche-de-cartas",
+  storageBucket: "noche-de-cartas.firebasestorage.app",
+  messagingSenderId: "638455937897",
+  appId: "1:638455937897:web:49fb53454fb24addbddbf8",
 };
 
 export const app = initializeApp(firebaseConfig);
