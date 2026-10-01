@@ -9,6 +9,7 @@
 - **Version ID**: `565e7e3` (persistencia localStorage, demo mode)
 - **Version ID**: `a46ff4a` (SQLite + backend real + salas online)
 - **Version ID**: `32d8720` (SQLite gratuito + auth automático + salas online)
+- **Version ID**: `1e7021c` (Backend testeado, salas online funcionando)
 - Para recuperar: usa el rollback en el panel de versiones de Kimi con el ID correspondiente.
 
 ---
@@ -85,6 +86,30 @@ KIMI_OPEN_URL=https://open.kimi.com
 ```
 
 ---
+
+## Resultados de pruebas (realizadas en esta sesión)
+
+### Backend (tRPC + SQLite)
+| Test | Resultado |
+|------|-----------|
+| `ping` | ✅ Servidor responde correctamente |
+| `devAuth.autoLogin` | ✅ Crea usuario demo automáticamente, establece cookie de sesión |
+| `cards.create` | ✅ Guarda cartas en SQLite con userId, deck, text, min/maxSeconds |
+| `cards.list` | ✅ Devuelve todas las cartas del usuario autenticado |
+| `room.create` | ✅ Crea sala con código único (ej: X532), prepara mazos |
+| `room.join` | ✅ Segundo usuario se une con código y rol |
+| `room.get` | ✅ Devuelve estado completo de la sala con manos secretas |
+| `room.start` | ✅ Inicia partida, reparte 3 cartas, asigna turno inicial |
+| `room.playCard` | ✅ Juega carta, asigna temporizador, pasa turno |
+
+### Flujo completo verificado
+1. ✅ Usuario 1 entra → auth automático → crea 3 cartas
+2. ✅ Usuario 1 crea sala X532 → ve su mano (3 cartas)
+3. ✅ Usuario 2 entra → se une a X532 con rol "ella"
+4. ✅ Usuario 1 ve `partnerHere: true`
+5. ✅ Usuario 1 inicia partida → estado: "playing"
+6. ✅ Usuario 1 juega carta `a-2` → temporizador asignado → mano: 2 cartas
+7. ✅ `currentCard` muestra texto, executor, timerEnd
 
 ## Pendientes prioritarios
 
