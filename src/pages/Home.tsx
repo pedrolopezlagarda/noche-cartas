@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { trpc } from "@/providers/trpc";
+import { useDemoCards } from "@/hooks/useDemoCards";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,8 +38,13 @@ const deckMeta: Record<Deck, { label: string; who: string; icon: typeof Crown; a
   ella: { label: "Mazo de Ella", who: "Lo que hará Él", icon: Crown, accent: "from-rose-500/70", chip: "text-rose-300 border-rose-400/30 bg-rose-500/10" },
 };
 
+const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+
 export default function Home() {
-  const { data: cards = [], isLoading } = trpc.cards.list.useQuery();
+  const demo = useDemoCards();
+  const trpcCards = trpc.cards.list.useQuery(undefined, { enabled: !IS_DEMO });
+  const cards = IS_DEMO ? demo.cards : (trpcCards.data ?? []);
+  const isLoading = IS_DEMO ? false : trpcCards.isLoading;
   const utils = trpc.useUtils();
 
   const [activeDeck, setActiveDeck] = useState<Deck>("el");
@@ -84,8 +90,18 @@ export default function Home() {
     if (min != null && max != null && min > max) { setError("El mínimo no puede ser mayor que el máximo."); return; }
 
     const payload = { deck: activeDeck, text: trimmed, minSeconds: min, maxSeconds: max };
-    const onDone = () => { setDialogOpen(false); utils.cards.list.invalidate(); };
 
+    if (IS_DEMO) {
+      if (editing) {
+        demo.update(editing.id, payload);
+      } else {
+        demo.create(payload);
+      }
+      setDialogOpen(false);
+      return;
+    }
+
+    const onDone = () => { setDialogOpen(false); utils.cards.list.invalidate(); };
     if (editing) {
       updateMutation.mutate({ ...payload, id: editing.id }, { onSuccess: onDone });
     } else {
@@ -94,6 +110,10 @@ export default function Home() {
   };
 
   const handleDelete = (id: number) => {
+    if (IS_DEMO) {
+      demo.remove(id);
+      return;
+    }
     deleteMutation.mutate({ id });
   };
 

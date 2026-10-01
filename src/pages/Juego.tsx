@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { SPECIALS, type SpecialCardDef } from "@/lib/specials";
 import { sfx, buzz } from "@/lib/feedback";
+import { useDemoCards } from "@/hooks/useDemoCards";
 import RoomGame from "./RoomGame";
 
 type Player = "el" | "ella";
@@ -113,8 +114,13 @@ function PhonePassAnimation({ from, to }: { from: Player; to: Player }) {
   );
 }
 
+const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+
 export default function Juego() {
-  const { data: cards = [], isLoading } = trpc.cards.list.useQuery();
+  const demo = useDemoCards();
+  const trpcCards = trpc.cards.list.useQuery(undefined, { enabled: !IS_DEMO });
+  const cards = IS_DEMO ? demo.cards : (trpcCards.data ?? []);
+  const isLoading = IS_DEMO ? false : trpcCards.isLoading;
 
   const [phase, setPhase] = useState<Phase>("setup");
   const [active, setActive] = useState<Player>("el");

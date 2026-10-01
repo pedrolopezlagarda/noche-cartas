@@ -10,6 +10,7 @@
 - **Version ID**: `a46ff4a` (SQLite + backend real + salas online)
 - **Version ID**: `32d8720` (SQLite gratuito + auth automático + salas online)
 - **Version ID**: `1e7021c` (Backend testeado, salas online funcionando)
+- **Version ID**: `89eeaf6` (Listo para deploy en Railway)
 - Para recuperar: usa el rollback en el panel de versiones de Kimi con el ID correspondiente.
 
 ---

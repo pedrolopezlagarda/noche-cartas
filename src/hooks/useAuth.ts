@@ -2,6 +2,9 @@ import { trpc } from "@/providers/trpc";
 import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { LOGIN_PATH } from "@/const";
+import { DEMO_USER } from "@/lib/demoData";
+
+const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
 
 type UseAuthOptions = {
   redirectOnUnauthenticated?: boolean;
@@ -23,20 +26,8 @@ export function useAuth(options?: UseAuthOptions) {
   } = trpc.auth.me.useQuery(undefined, {
     staleTime: 1000 * 60 * 5,
     retry: false,
+    enabled: !IS_DEMO, // en demo el mock responde directamente
   });
-
-  // Si no hay sesión, crear usuario demo automáticamente
-  const autoLogin = trpc.devAuth.autoLogin.useMutation({
-    onSuccess: () => {
-      utils.auth.me.invalidate();
-    },
-  });
-
-  useEffect(() => {
-    if (!isLoading && !user && !error && !autoLogin.isPending) {
-      autoLogin.mutate();
-    }
-  }, [isLoading, user, error, autoLogin]);
 
   const logoutMutation = trpc.auth.logout.useMutation({
     onSuccess: async () => {
@@ -47,24 +38,27 @@ export function useAuth(options?: UseAuthOptions) {
 
   const logout = useCallback(() => logoutMutation.mutate(), [logoutMutation]);
 
+  const effectiveUser = IS_DEMO ? DEMO_USER : user;
+  const effectiveLoading = IS_DEMO ? false : isLoading;
+
   useEffect(() => {
-    if (redirectOnUnauthenticated && !isLoading && !user && !autoLogin.isPending) {
+    if (redirectOnUnauthenticated && !effectiveLoading && !effectiveUser) {
       const currentPath = window.location.pathname;
       if (currentPath !== redirectPath) {
         navigate(redirectPath);
       }
     }
-  }, [redirectOnUnauthenticated, isLoading, user, autoLogin.isPending, navigate, redirectPath]);
+  }, [redirectOnUnauthenticated, effectiveLoading, effectiveUser, navigate, redirectPath]);
 
   return useMemo(
     () => ({
-      user: user ?? null,
-      isAuthenticated: !!user,
-      isLoading: isLoading || logoutMutation.isPending || autoLogin.isPending,
-      error,
+      user: effectiveUser ?? null,
+      isAuthenticated: !!effectiveUser,
+      isLoading: effectiveLoading || logoutMutation.isPending,
+      error: IS_DEMO ? null : error,
       logout,
       refresh: refetch,
     }),
-    [user, isLoading, logoutMutation.isPending, autoLogin.isPending, error, logout, refetch],
+    [effectiveUser, effectiveLoading, logoutMutation.isPending, error, logout, refetch],
   );
 }
