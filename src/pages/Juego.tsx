@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,7 +19,8 @@ import {
 } from "lucide-react";
 import { SPECIALS, type SpecialCardDef } from "@/lib/specials";
 import { sfx, buzz } from "@/lib/feedback";
-import { useDemoCards } from "@/hooks/useDemoCards";
+import { useFirebaseAuth } from "@/hooks/useFirebaseAuth";
+import { useFirebaseCards } from "@/hooks/useFirebaseCards";
 import RoomGame from "./RoomGame";
 
 type Player = "el" | "ella";
@@ -28,7 +28,7 @@ type Player = "el" | "ella";
 type ActionCard = {
   kind: "action";
   uid: string;
-  id: number;
+  id: string;
   deck: Player;
   text: string;
   minSeconds: number | null;
@@ -114,13 +114,9 @@ function PhonePassAnimation({ from, to }: { from: Player; to: Player }) {
   );
 }
 
-const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
-
 export default function Juego() {
-  const demo = useDemoCards();
-  const trpcCards = trpc.cards.list.useQuery(undefined, { enabled: !IS_DEMO });
-  const cards = IS_DEMO ? demo.cards : (trpcCards.data ?? []);
-  const isLoading = IS_DEMO ? false : trpcCards.isLoading;
+  const { user } = useFirebaseAuth();
+  const { cards, isLoading } = useFirebaseCards(user?.uid);
 
   const [phase, setPhase] = useState<Phase>("setup");
   const [active, setActive] = useState<Player>("el");
@@ -173,7 +169,7 @@ export default function Juego() {
   const startGame = () => {
     // Cada uno juega con SU mazo: el Mazo de Él contiene lo que hará Ella.
     // Las 3 cartas especiales van de serie en cada mazo.
-    const build = (list: Array<{ id: number; deck: Player; text: string; minSeconds: number | null; maxSeconds: number | null }>): HandCard[] =>
+    const build = (list: Array<{ id: string; deck: Player; text: string; minSeconds: number | null; maxSeconds: number | null }>): HandCard[] =>
       shuffle([
         ...list.map(
           (c): ActionCard => ({

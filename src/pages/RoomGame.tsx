@@ -1,71 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useParams } from "react-router";
-import { trpc } from "@/providers/trpc";
+import { useFirebaseAuth } from "@/hooks/useFirebaseAuth";
+import { useFirebaseCards } from "@/hooks/useFirebaseCards";
+import { useFirebaseRoom } from "@/hooks/useFirebaseRoom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SPECIAL_BY_UID } from "@/lib/specials";
+import { SPECIAL_BY_UID, SPECIALS } from "@/lib/specials";
 import { sfx, buzz } from "@/lib/feedback";
 import {
-  Crown,
-  DoorOpen,
-  Heart,
-  Hourglass,
-  KeyRound,
-  Play,
-  RotateCcw,
-  SkipForward,
-  Smartphone,
-  Sparkles,
-  Wifi,
-  Zap,
+  Crown, DoorOpen, Heart, KeyRound,
+  SkipForward, Sparkles, Wifi,
 } from "lucide-react";
 
 type Role = "el" | "ella";
-type RoomCard =
-  | {
-      kind: "action";
-      uid: string;
-      id: number;
-      deck: Role;
-      text: string;
-      minSeconds: number | null;
-      maxSeconds: number | null;
-    }
-  | { kind: "special"; uid: string; effect: string };
 
-type RoomData = {
-  code: string;
-  status: "lobby" | "playing" | "finished";
-  activeRole: Role | null;
-  extraPlays: number;
-  currentCard: { kind: "action"; text: string; executor: Role; timerEnd: number } | null;
-  defMin: number;
-  defMax: number;
-  myRole: Role;
-  myHand: RoomCard[];
-  partnerHere: boolean;
-  isCreator: boolean;
-  now: number;
-};
+type RoomCard =
+  | { kind: "action"; uid: string; id: string; deck: Role; text: string; minSeconds: number | null; maxSeconds: number | null }
+  | { kind: "special"; uid: string; effect: string };
 
 const name = (p: Role) => (p === "el" ? "Él" : "Ella");
 const other = (p: Role): Role => (p === "el" ? "ella" : "el");
 const IconFor = (p: Role) => (p === "el" ? Crown : Heart);
 const accentText = (p: Role) => (p === "el" ? "text-rose-300" : "text-amber-300");
-const accentBar = (p: Role) =>
-  p === "el" ? "from-rose-500/70" : "from-amber-400/70";
 
-const mmss = (s: number) =>
-  `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 const STORAGE_KEY = "nc-room-code";
 
-const fadeUp = {
-  initial: { opacity: 0, y: 16 },
-  animate: { opacity: 1, y: 0 },
-};
+const fadeUp = { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0 } };
 
 function useCountdown(timerEnd: number | null, onDone: () => void) {
   const [left, setLeft] = useState(0);
@@ -79,10 +43,7 @@ function useCountdown(timerEnd: number | null, onDone: () => void) {
       const rem = Math.max(0, Math.ceil((timerEnd - Date.now()) / 1000));
       setLeft(rem);
       if (rem > 0 && rem <= 5) sfx.tick();
-      if (rem <= 0 && !firedRef.current) {
-        firedRef.current = true;
-        onDoneRef.current();
-      }
+      if (rem <= 0 && !firedRef.current) { firedRef.current = true; onDoneRef.current(); }
     };
     tick();
     const iv = setInterval(tick, 250);
@@ -91,532 +52,398 @@ function useCountdown(timerEnd: number | null, onDone: () => void) {
   return timerEnd ? left : 0;
 }
 
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const HAND_SIZE = 3;
+
 export default function RoomGame() {
+  const { user } = useFirebaseAuth();
+  const { cards } = useFirebaseCards(user?.uid);
+  const {
+    room, code, error: roomError, loading,
+    createRoom, joinRoom, startGame, playCard, finishCard, leaveRoom, setCode,
+  } = useFirebaseRoom(user?.uid);
+
   const { code: urlCode } = useParams<{ code?: string }>();
-  const [code, setCode] = useState<string>(() => {
-    const fromUrl = urlCode?.trim() ?? "";
-    if (fromUrl.length >= 4) return fromUrl.toUpperCase();
-    return localStorage.getItem(STORAGE_KEY) ?? "";
-  });
   const [joinInput, setJoinInput] = useState(urlCode?.trim() ?? "");
   const [createRole, setCreateRole] = useState<Role>("el");
   const [defMin, setDefMin] = useState("10");
   const [defMax, setDefMax] = useState("300");
-  const [error, setError] = useState("");
+  const [localError, setLocalError] = useState("");
 
-  const utils = trpc.useUtils();
-  const query = trpc.room.get.useQuery(
-    { code },
-    {
-      refetchInterval: 1200,
-      enabled: code.length >= 4,
-      retry: false,
-    },
-  );
-  const data = query.data as RoomData | undefined;
-  const roomError = query.error?.message ?? "";
+  // Al cargar, recuperar código guardado
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    const fromUrl = urlCode?.trim() ?? "";
+    if (fromUrl.length >= 4) {
+      setCode(fromUrl.toUpperCase());
+    } else if (saved && saved.length >= 4) {
+      setCode(saved);
+    }
+  }, [urlCode, setCode]);
 
-  const refresh = () => utils.room.get.invalidate({ code });
+  const myRole = room && user ? (room.players[user.uid]?.role ?? null) : null;
+  const partnerHere = room ? Object.keys(room.players).length >= 2 : false;
+  const isCreator = room ? room.creatorId === user?.uid : false;
 
-  const createMutation = trpc.room.create.useMutation({
-    onSuccess: (res) => {
-      const c = (res as { code: string }).code;
-      localStorage.setItem(STORAGE_KEY, c);
-      setCode(c);
-      setError("");
-    },
-    onError: (e) => setError(e.message),
+  // Temporizador
+  const finishRef = useRef(finishCard);
+  finishRef.current = finishCard;
+  const secondsLeft = useCountdown(room?.currentCard?.timerEnd ?? null, () => {
+    if (code && room && myRole) {
+      const o = other(myRole);
+      finishRef.current({
+        activeRole: o,
+        extraPlays: 0,
+        currentCard: null,
+        hands: room.hands,
+        piles: room.piles,
+      });
+    }
   });
 
-  const joinMutation = trpc.room.join.useMutation({
-    onSuccess: (res) => {
-      const c = (res as { code: string }).code;
-      localStorage.setItem(STORAGE_KEY, c);
-      setCode(c);
-      setError("");
-    },
-    onError: (e) => setError(e.message),
-  });
-
-  const startMutation = trpc.room.start.useMutation({ onSuccess: refresh, onError: (e) => setError(e.message) });
-  const playMutation = trpc.room.playCard.useMutation({ onSuccess: refresh, onError: (e) => setError(e.message) });
-  const finishMutation = trpc.room.finishCard.useMutation({
-    onSuccess: () => {
-      sfx.done();
-      buzz([60, 40, 70]);
-      refresh();
-    },
-  });
-  const restartMutation = trpc.room.restart.useMutation({ onSuccess: refresh });
-  const leaveMutation = trpc.room.leave.useMutation({
-    onSuccess: () => {
-      localStorage.removeItem(STORAGE_KEY);
-      setCode("");
-      setError("");
-    },
-  });
-
-  // Cuenta atrás: al llegar a 0, quien lo vea primero termina la carta.
-  const finishRef = useRef(finishMutation);
-  finishRef.current = finishMutation;
-  const secondsLeft = useCountdown(data?.currentCard?.timerEnd ?? null, () => {
-    if (code) finishRef.current.mutate({ code });
-  });
-
-  // Sonido cuando cae una carta (la tuya o la de tu pareja)
+  // Sonidos
   const prevTimerRef = useRef<number | null>(null);
   useEffect(() => {
-    const te = data?.currentCard?.timerEnd ?? null;
-    if (te && te !== prevTimerRef.current) {
-      sfx.launch();
-      buzz(40);
-    }
+    const te = room?.currentCard?.timerEnd ?? null;
+    if (te && te !== prevTimerRef.current) { sfx.launch(); buzz(40); }
     prevTimerRef.current = te;
-  }, [data?.currentCard?.timerEnd]);
+  }, [room?.currentCard?.timerEnd]);
 
-  // Sonido cuando empieza tu turno
   const prevTurnMineRef = useRef(false);
   useEffect(() => {
-    if (!data || data.status !== "playing" || data.currentCard) {
-      prevTurnMineRef.current = false;
-      return;
-    }
-    const mine = data.activeRole === data.myRole;
-    if (mine && !prevTurnMineRef.current) {
-      sfx.turn();
-      buzz(20);
-    }
+    if (!room || room.status !== "playing" || room.currentCard) { prevTurnMineRef.current = false; return; }
+    const mine = room.activeRole === myRole;
+    if (mine && !prevTurnMineRef.current) { sfx.turn(); buzz(20); }
     prevTurnMineRef.current = mine;
-  }, [data]);
+  }, [room, myRole]);
 
-  const exit = () => {
-    if (code) leaveMutation.mutate({ code });
-    else {
-      localStorage.removeItem(STORAGE_KEY);
-      setCode("");
-    }
+  const exit = () => { leaveRoom(); setLocalError(""); };
+
+  // Crear sala
+  const handleCreate = () => {
+    setLocalError("");
+    if (!user) { setLocalError("Esperando autenticación..."); return; }
+    createRoom(createRole, user.uid.substring(0, 6));
   };
 
-  // ---------- sin sala: crear o unirse ----------
-  if (!data) {
+  // Unirse
+  const handleJoin = () => {
+    setLocalError("");
+    const c = joinInput.trim().toUpperCase();
+    if (c.length < 4) { setLocalError("Introduce un código de 4 letras."); return; }
+    if (!user) { setLocalError("Esperando autenticación..."); return; }
+    joinRoom(c, user.uid.substring(0, 6));
+  };
+
+  // Empezar partida
+  const handleStart = () => {
+    if (!room || !user || !myRole) return;
+    const minDefault = parseInt(defMin, 10) || 10;
+    const maxDefault = Math.max(minDefault, parseInt(defMax, 10) || 300);
+
+    const build = (list: Array<{ id: string; deck: Role; text: string; minSeconds: number | null; maxSeconds: number | null }>): RoomCard[] =>
+      shuffle([
+        ...list.map((c): RoomCard => ({ kind: "action", uid: `a-${c.id}`, id: c.id, deck: c.deck, text: c.text, minSeconds: c.minSeconds, maxSeconds: c.maxSeconds })),
+        ...SPECIALS.map((s) => ({ ...s })),
+      ]);
+
+    const elPile = build(cards.filter((c) => c.deck === "el"));
+    const ellaPile = build(cards.filter((c) => c.deck === "ella"));
+
+    const drawTo = (hand: RoomCard[], pile: RoomCard[]) => {
+      const needed = Math.max(0, HAND_SIZE - hand.length);
+      return { hand: [...hand, ...pile.slice(0, needed)], pile: pile.slice(needed) };
+    };
+
+    const elDraw = drawTo([], elPile);
+    const ellaDraw = drawTo([], ellaPile);
+
+    const activeRole: Role = Math.random() < 0.5 ? "el" : "ella";
+
+    startGame({
+      hands: { el: elDraw.hand, ella: ellaDraw.hand },
+      piles: { el: elDraw.pile, ella: ellaDraw.pile },
+      activeRole,
+      defMin: minDefault,
+      defMax: maxDefault,
+    });
+  };
+
+  // Jugar carta
+  const handlePlay = (card: RoomCard) => {
+    if (!room || !user || !myRole) return;
+    if (room.status !== "playing" || room.currentCard) return;
+    if (room.activeRole !== myRole) return;
+
+    const hand = room.hands[myRole] ?? [];
+    const pile = room.piles[myRole] ?? [];
+    const newHand = hand.filter((c) => c.uid !== card.uid);
+
+    if (card.kind === "special") {
+      const def = SPECIAL_BY_UID[card.uid];
+      if (!def) return;
+
+      if (def.effect === "roba2") {
+        const needed = Math.max(0, 2);
+        const drawn = pile.slice(0, needed);
+        const newPile = pile.slice(needed);
+        playCard({
+          currentCard: null,
+          extraPlays: room.extraPlays,
+          hands: { ...room.hands, [myRole]: [...newHand, ...drawn] },
+          piles: { ...room.piles, [myRole]: newPile },
+          activeRole: other(myRole),
+        });
+        return;
+      }
+
+      if (def.effect === "doble") {
+        playCard({
+          currentCard: null,
+          extraPlays: 2,
+          hands: { ...room.hands, [myRole]: newHand },
+          piles: { ...room.piles, [myRole]: pile },
+          activeRole: myRole,
+        });
+        return;
+      }
+
+      if (def.effect === "cambia") {
+        const allCards = [...newHand, ...pile];
+        const shuffled = shuffle(allCards);
+        const newHand2 = shuffled.slice(0, HAND_SIZE);
+        const newPile2 = shuffled.slice(HAND_SIZE);
+        playCard({
+          currentCard: null,
+          extraPlays: room.extraPlays,
+          hands: { ...room.hands, [myRole]: newHand2 },
+          piles: { ...room.piles, [myRole]: newPile2 },
+          activeRole: other(myRole),
+        });
+        return;
+      }
+      return;
+    }
+
+    // Carta de acción
+    const minS = card.minSeconds ?? room.defMin;
+    const maxS = Math.max(minS, card.maxSeconds ?? room.defMax);
+    const seconds = Math.floor(minS + Math.random() * (maxS - minS + 1));
+    const timerEnd = Date.now() + seconds * 1000;
+
+    playCard({
+      currentCard: { kind: "action", text: card.text, executor: other(myRole), timerEnd },
+      extraPlays: room.extraPlays,
+      hands: { ...room.hands, [myRole]: newHand },
+      piles: { ...room.piles, [myRole]: pile },
+      activeRole: myRole,
+    });
+  };
+
+  const handleSkip = () => {
+    if (!room || !myRole) return;
+    playCard({
+      currentCard: null,
+      extraPlays: room.extraPlays,
+      hands: room.hands,
+      piles: room.piles,
+      activeRole: other(myRole),
+    });
+  };
+
+  // UI
+  if (!code || !room) {
     return (
-      <div className="mx-auto max-w-xl">
+      <div className="px-5 pb-28 pt-6">
         <motion.div {...fadeUp} className="text-center mb-8">
-          <span className="chip mb-4">
-            <Wifi className="h-3 w-3" />
-            Dos móviles · cada uno con el suyo
-          </span>
-          <h1 className="font-display text-5xl font-semibold leading-tight">
-            Jugaos en <span className="text-gradient-rose italic">dos móviles</span>
-          </h1>
-          <p className="text-muted-foreground mt-3 text-[15px] leading-relaxed max-w-md mx-auto">
-            Crea una sala, elige tu rol y comparte el código de 4 letras con tu
-            pareja. Cada uno verá solo su propia mano en su móvil.
-          </p>
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-stone-800/60 border border-stone-700/50 mb-3">
+            <Wifi className="w-5 h-5 text-amber-400" />
+          </div>
+          <h1 className="font-serif text-2xl text-stone-100">Jugar online</h1>
+          <p className="text-sm text-stone-500 mt-1 max-w-xs mx-auto">Conecta tu movil con el de tu pareja y jugad juntos desde cualquier sitio.</p>
         </motion.div>
 
-        <motion.div
-          {...fadeUp}
-          transition={{ delay: 0.1 }}
-          className="card-luxe rounded-2xl p-6 mb-4"
-        >
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-4 flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3" />
-            Crear sala · elige tu rol
-          </p>
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            {(["el", "ella"] as Role[]).map((r) => {
-              const Icon = IconFor(r);
-              const selected = createRole === r;
-              return (
-                <button
-                  key={r}
-                  onClick={() => setCreateRole(r)}
-                  className={`rounded-xl border p-4 text-center transition-all ${
-                    selected
-                      ? "border-rose-500/60 bg-rose-500/10 glow-rose"
-                      : "border-border bg-secondary/40"
-                  }`}
-                >
-                  <Icon className={`h-6 w-6 mx-auto mb-2 ${accentText(r)}`} />
-                  <p className="font-semibold">Soy {name(r)}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Tu mazo: lo que hará {name(other(r))}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-          <div className="grid grid-cols-2 gap-4 mb-5">
-            <div className="space-y-2">
-              <Label className="text-muted-foreground text-xs">Duración mínima (s)</Label>
-              <Input
-                type="number"
-                min={0}
-                inputMode="numeric"
-                value={defMin}
-                onChange={(e) => setDefMin(e.target.value)}
-                className="rounded-xl bg-secondary/40 h-12"
-              />
+        <div className="space-y-4 max-w-sm mx-auto">
+          <motion.div {...fadeUp} transition={{ delay: 0.05 }} className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5">
+            <div className="flex items-center gap-2 mb-3"><KeyRound className="w-4 h-4 text-amber-400" /><h2 className="text-sm font-medium text-stone-300">Unirse a sala</h2></div>
+            <div className="flex gap-2">
+              <Input value={joinInput} onChange={(e) => setJoinInput(e.target.value.toUpperCase())} placeholder="CODIGO" maxLength={6} className="uppercase bg-stone-900 border-stone-800 rounded-xl text-sm text-stone-200 placeholder:text-stone-600" />
+              <Button onClick={handleJoin} disabled={loading} className="rounded-xl bg-amber-600 hover:bg-amber-700 text-white px-5">{loading ? "..." : "Entrar"}</Button>
             </div>
-            <div className="space-y-2">
-              <Label className="text-muted-foreground text-xs">Duración máxima (s)</Label>
-              <Input
-                type="number"
-                min={0}
-                inputMode="numeric"
-                value={defMax}
-                onChange={(e) => setDefMax(e.target.value)}
-                className="rounded-xl bg-secondary/40 h-12"
-              />
+          </motion.div>
+
+          <motion.div {...fadeUp} transition={{ delay: 0.1 }} className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5">
+            <div className="flex items-center gap-2 mb-3"><Sparkles className="w-4 h-4 text-rose-400" /><h2 className="text-sm font-medium text-stone-300">Crear sala</h2></div>
+            <div className="flex gap-2 mb-3">
+              <button onClick={() => setCreateRole("el")} className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all ${createRole === "el" ? "bg-amber-500/10 border-amber-400/30 text-amber-400" : "bg-stone-900 border-stone-800 text-stone-500"}`}>Mazo de Él</button>
+              <button onClick={() => setCreateRole("ella")} className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all ${createRole === "ella" ? "bg-rose-500/10 border-rose-400/30 text-rose-400" : "bg-stone-900 border-stone-800 text-stone-500"}`}>Mazo de Ella</button>
             </div>
-          </div>
-          <Button
-            size="lg"
-            className="w-full rounded-full h-13 bg-gradient-to-r from-rose-600 via-rose-500 to-orange-400 hover:from-rose-500 hover:to-orange-300 glow-rose border-0"
-            disabled={createMutation.isPending}
-            onClick={() =>
-              createMutation.mutate({
-                role: createRole,
-                defMin: parseInt(defMin, 10) || 10,
-                defMax: Math.max(parseInt(defMin, 10) || 10, parseInt(defMax, 10) || 300),
-              })
-            }
-          >
-            <Sparkles className="mr-2 h-5 w-5" />
-            Crear sala
-          </Button>
-        </motion.div>
+            <Button onClick={handleCreate} disabled={loading} className="w-full rounded-xl bg-gradient-to-r from-amber-600 to-amber-800 text-white font-medium">{loading ? "Creando..." : "Crear sala"}</Button>
+          </motion.div>
+        </div>
 
-        <motion.div {...fadeUp} transition={{ delay: 0.2 }} className="card-luxe rounded-2xl p-6">
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-4 flex items-center gap-1.5">
-            <KeyRound className="h-3 w-3" />
-            Unirse con un código
-          </p>
-          <div className="flex gap-3">
-            <Input
-              value={joinInput}
-              onChange={(e) => setJoinInput(e.target.value.toUpperCase())}
-              placeholder="CÓDIGO"
-              maxLength={4}
-              className="rounded-xl bg-secondary/40 h-12 uppercase tracking-[0.3em] text-center text-lg font-semibold"
-            />
-            <Button
-              size="lg"
-              variant="outline"
-              className="rounded-full px-6 shrink-0"
-              disabled={joinInput.length !== 4 || joinMutation.isPending}
-              onClick={() => joinMutation.mutate({ code: joinInput })}
-            >
-              Unirse
-            </Button>
-          </div>
-        </motion.div>
-
-        {(error || roomError) && (
-          <p className="text-sm text-rose-400 text-center mt-4">
-            {error || roomError}
-          </p>
-        )}
-        {code && !data && !query.isLoading && (
-          <div className="text-center mt-4">
-            <Button variant="ghost" onClick={exit}>
-              <DoorOpen className="mr-2 h-4 w-4" />
-              Volver
-            </Button>
-          </div>
+        {(localError || roomError) && (
+          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center text-sm text-red-400 mt-4">{localError || roomError}</motion.p>
         )}
       </div>
     );
   }
 
-  // ---------- lobby ----------
-  if (data.status === "lobby") {
-    const Icon = IconFor(data.myRole);
+  // Lobby
+  if (room.status === "lobby") {
     return (
-      <div className="mx-auto max-w-xl text-center pt-10">
-        <motion.div {...fadeUp}>
-          <span className="chip mb-6">
-            <Smartphone className="h-3 w-3" />
-            Sala creada
-          </span>
-          <p className="text-muted-foreground text-sm mb-2">
-            Dile a tu pareja que entre con este código:
-          </p>
-          <p className="font-display text-7xl font-semibold tracking-[0.2em] text-gradient-rose mb-8">
-            {data.code}
-          </p>
-          <div className="card-luxe rounded-2xl p-6 mb-6 inline-flex items-center gap-4">
-            <Icon className={`h-8 w-8 ${accentText(data.myRole)}`} />
-            <div className="text-left">
-              <p className="font-semibold">Tu rol: {name(data.myRole)}</p>
-              <p className="text-xs text-muted-foreground">
-                Tu mazo contiene lo que hará {name(other(data.myRole))}
-              </p>
+      <div className="px-5 pb-28 pt-6">
+        <motion.div {...fadeUp} className="text-center mb-6">
+          <h1 className="font-serif text-2xl text-stone-100">Sala <span className="text-amber-400 tracking-widest">{room.code}</span></h1>
+          <p className="text-sm text-stone-500 mt-1">Comparte este código con tu pareja.</p>
+        </motion.div>
+
+        <div className="max-w-sm mx-auto space-y-4">
+          <motion.div {...fadeUp} transition={{ delay: 0.05 }} className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 text-center">
+            <p className="text-xs uppercase tracking-widest text-stone-500 mb-3">Jugadores</p>
+            <div className="space-y-2">
+              {Object.entries(room.players).map(([uid, p]) => (
+                <div key={uid} className="flex items-center justify-center gap-2 text-sm text-stone-300">
+                  {(() => { const I = IconFor(p.role); return <I className="w-4 h-4" />; })()} {name(p.role)} {uid === user?.uid && <span className="text-[10px] text-stone-600">(tú)</span>}
+                </div>
+              ))}
             </div>
-          </div>
-          <p className="text-sm text-muted-foreground mb-8">
-            {data.partnerHere
-              ? "¡Tu pareja ya está dentro!"
-              : "Esperando a que tu pareja entre con el código…"}
-          </p>
-          {data.isCreator ? (
-            <Button
-              size="lg"
-              disabled={!data.partnerHere || startMutation.isPending}
-              onClick={() => startMutation.mutate({ code: data.code })}
-              className="rounded-full px-8 bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 glow-rose border-0"
-            >
-              <Play className="mr-2 h-5 w-5" />
-              Empezar partida
-            </Button>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Esperando a que tu pareja dé comienzo…
-            </p>
+            {!partnerHere && (
+              <div className="mt-3 flex items-center justify-center gap-2 text-xs text-stone-500">
+                <motion.span animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 1.5, repeat: Infinity }} className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                Esperando a tu pareja...
+              </div>
+            )}
+          </motion.div>
+
+          {isCreator && partnerHere && (
+            <motion.div {...fadeUp} transition={{ delay: 0.1 }} className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5">
+              <p className="text-xs uppercase tracking-widest text-stone-500 mb-3">Configuración</p>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div><Label className="text-xs text-stone-500 mb-1.5 block">Duración mínima (s)</Label><Input type="number" value={defMin} onChange={(e) => setDefMin(e.target.value)} className="bg-stone-900 border-stone-800 rounded-xl text-sm" /></div>
+                <div><Label className="text-xs text-stone-500 mb-1.5 block">Duración máxima (s)</Label><Input type="number" value={defMax} onChange={(e) => setDefMax(e.target.value)} className="bg-stone-900 border-stone-800 rounded-xl text-sm" /></div>
+              </div>
+              <Button onClick={handleStart} className="w-full rounded-xl bg-gradient-to-r from-amber-600 to-amber-800 text-white font-medium">Empezar partida</Button>
+            </motion.div>
           )}
-          <div className="mt-8">
-            <Button variant="ghost" onClick={exit}>
-              <DoorOpen className="mr-2 h-4 w-4" />
-              Salir de la sala
-            </Button>
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
 
-  // ---------- fin ----------
-  if (data.status === "finished") {
-    return (
-      <div className="mx-auto max-w-xl text-center pt-20">
-        <motion.div {...fadeUp}>
-          <Sparkles className="h-10 w-10 mx-auto mb-4 text-amber-300" />
-          <p className="font-display text-5xl font-semibold mb-4">
-            Fin de la partida
-          </p>
-          <p className="text-muted-foreground mb-10">
-            {data.activeRole ? name(data.activeRole) : "Alguien"} se quedó sin
-            cartas. ¿Otra ronda?
-          </p>
-          <div className="flex gap-3 justify-center">
-            <Button
-              size="lg"
-              onClick={() => restartMutation.mutate({ code: data.code })}
-              className="rounded-full px-7 bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 glow-rose border-0"
-            >
-              <RotateCcw className="mr-2 h-5 w-5" />
-              Jugar otra vez
-            </Button>
-            <Button size="lg" variant="outline" onClick={exit} className="rounded-full px-7">
-              <DoorOpen className="mr-2 h-4 w-4" />
-              Salir
-            </Button>
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
+          {!isCreator && partnerHere && (
+            <motion.div {...fadeUp} transition={{ delay: 0.1 }} className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-5 text-center">
+              <p className="text-sm text-stone-400">Esperando a que el creador empiece la partida...</p>
+            </motion.div>
+          )}
 
-  // ---------- carta en juego (temporizador) ----------
-  if (data.currentCard) {
-    const executor = data.currentCard.executor;
-    const iAmExecutor = data.myRole === executor;
-    const pct = Math.max(
-      0,
-      Math.min(100, (secondsLeft / Math.max(1, Math.ceil((data.currentCard.timerEnd - (data.now ?? Date.now())) / 1000))) * 100),
-    );
-    return (
-      <div className="mx-auto max-w-xl pb-28">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="flex flex-col items-center mb-8"
-        >
-          <p className="text-muted-foreground text-xs uppercase tracking-[0.25em] mb-6">
-            {iAmExecutor ? "Te toca cumplir" : "Tu pareja está cumpliendo tu carta"}
-          </p>
-          <div className="relative h-52 w-52">
-            <div
-              className="timer-ring absolute inset-0 rounded-full"
-              style={{ "--p": `${pct}%` } as React.CSSProperties}
-            />
-            <div className="absolute inset-2 rounded-full bg-background flex flex-col items-center justify-center">
-              <span className="font-display text-6xl font-semibold tabular-nums">
-                {mmss(secondsLeft)}
-              </span>
-              <span className="text-xs text-muted-foreground mt-1">
-                <Hourglass className="inline h-3 w-3 mr-1" />
-                {name(executor)} debe hacer esto
-              </span>
-            </div>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15 }}
-          className="card-luxe rounded-2xl p-6"
-        >
-          <div className="flex gap-4">
-            <div
-              className={`w-1 self-stretch rounded-full bg-gradient-to-b ${accentBar(executor)} to-transparent shrink-0`}
-            />
-            <p className="text-lg leading-relaxed whitespace-pre-wrap">
-              {data.currentCard.text}
-            </p>
-          </div>
-        </motion.div>
-
-        <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-background via-background/90 to-transparent pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <div className="mx-auto max-w-xl">
-            <Button
-              variant="outline"
-              className="w-full rounded-full h-12"
-              onClick={() => finishMutation.mutate({ code: data.code })}
-            >
-              <SkipForward className="mr-2 h-4 w-4" />
-              Terminar ahora
-            </Button>
-          </div>
+          <Button onClick={exit} variant="outline" className="w-full rounded-xl border-stone-800 text-stone-500 hover:text-stone-300"><DoorOpen className="w-4 h-4 mr-1.5" /> Salir de la sala</Button>
         </div>
       </div>
     );
   }
 
-  // ---------- mi turno: mostrar mano ----------
-  if (data.activeRole === data.myRole) {
-    return (
-      <div className="mx-auto max-w-xl pb-24">
-        <motion.div {...fadeUp} className="mb-2">
-          <div className="flex items-center gap-3">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-60" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
-            </span>
-            <h1 className="font-display text-4xl font-semibold">
-              Tu turno, <span className={`italic ${accentText(data.myRole)}`}>{name(data.myRole)}</span>
-            </h1>
-          </div>
+  // Playing
+  const hand = myRole ? (room.hands[myRole] ?? []) : [];
+  const myTurn = room.activeRole === myRole && !room.currentCard;
+
+
+  return (
+    <div className="px-4 pb-28 pt-4">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="font-serif text-xl text-stone-100">Noche de <span className="text-amber-400">Cartas</span></h1>
+          <p className="text-xs text-stone-500">Sala {room.code}</p>
+        </div>
+        <Button onClick={exit} variant="ghost" size="sm" className="text-stone-500 hover:text-stone-300"><DoorOpen className="w-4 h-4" /></Button>
+      </div>
+
+      {room.currentCard && (
+        <motion.div {...fadeUp} className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-950/40 to-stone-900/60 p-5 mb-4 text-center">
+          <p className="text-xs uppercase tracking-widest text-amber-400/70 mb-2">Carta en juego</p>
+          <p className="text-lg text-stone-100 font-medium mb-3">{room.currentCard.text}</p>
+          <div className="text-3xl font-serif text-amber-400">{mmss(secondsLeft)}</div>
+          <p className="text-xs text-stone-500 mt-2">La ejecuta: <span className={accentText(room.currentCard.executor)}>{name(room.currentCard.executor)}</span></p>
         </motion.div>
-        <motion.div {...fadeUp} transition={{ delay: 0.05 }} className="mb-6">
-          <p className="text-muted-foreground text-sm">
-            Tu mano es secreta: {name(other(data.myRole))} no puede verla.
-            Elige una carta y tu pareja la ejecutará.
-          </p>
-          {data.extraPlays > 0 && (
-            <span className="chip mt-3 text-amber-300 border-amber-400/30 bg-amber-500/10">
-              <Zap className="h-3 w-3" />
-              Doble acción: te quedan {data.extraPlays} cartas seguidas
-            </span>
+      )}
+
+      {!room.currentCard && (
+        <motion.div {...fadeUp} className="rounded-2xl border border-stone-800/80 bg-stone-900/40 p-4 mb-4 text-center">
+          {myTurn ? (
+            <>
+              <p className="text-sm text-stone-300">Es tu turno, <span className={accentText(myRole!)}>{name(myRole!)}</span></p>
+              <p className="text-xs text-stone-500 mt-1">Elige una carta de tu mano</p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-stone-400">Turno de <span className={accentText(other(myRole!))}>{name(other(myRole!))}</span></p>
+              <p className="text-xs text-stone-500 mt-1">Espera a que juegue...</p>
+            </>
           )}
         </motion.div>
+      )}
 
-        {data.myHand.length === 0 ? (
-          <p className="text-muted-foreground">No te quedan cartas.</p>
-        ) : (
-          <div className="grid gap-3">
-            <AnimatePresence initial={false}>
-              {data.myHand.map((card, i) =>
-                card.kind === "special" ? (
-                  <motion.div
-                    key={card.uid}
-                    layout
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.25, delay: Math.min(i * 0.05, 0.25) }}
-                    whileHover={{ y: -4 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() =>
-                      playMutation.mutate({ code: data.code, uid: card.uid })
-                    }
-                    className="rounded-2xl p-5 cursor-pointer group border border-amber-400/40 bg-gradient-to-br from-amber-500/15 to-transparent"
-                  >
-                    <div className="flex items-start gap-4">
-                      <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shrink-0">
-                        {(() => {
-                          const def = SPECIAL_BY_UID[card.uid];
-                          const Icon = def?.icon ?? Sparkles;
-                          return <Icon className="h-5 w-5 text-amber-950" />;
-                        })()}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-display text-2xl font-semibold leading-tight">
-                          {SPECIAL_BY_UID[card.uid]?.title ?? "Especial"}
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-1 leading-snug">
-                          {SPECIAL_BY_UID[card.uid]?.description}
-                        </p>
-                        <span className="chip mt-3 text-amber-300 border-amber-400/30 bg-amber-500/10">
-                          <Sparkles className="h-3 w-3" />
-                          Especial · sin tiempo
-                        </span>
-                      </div>
-                      <Play className="h-5 w-5 shrink-0 self-center text-amber-300 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </div>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key={card.uid}
-                    layout
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.25, delay: Math.min(i * 0.05, 0.25) }}
-                    whileHover={{ y: -4 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() =>
-                      playMutation.mutate({ code: data.code, uid: card.uid })
-                    }
-                    className="card-luxe rounded-2xl p-5 cursor-pointer group"
-                  >
-                    <div className="flex gap-4">
-                      <div
-                        className={`w-1 self-stretch rounded-full bg-gradient-to-b ${accentBar(other(card.deck))} to-transparent shrink-0`}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="whitespace-pre-wrap leading-relaxed text-[15px]">
-                          {card.text}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-3">
-                          {card.minSeconds != null || card.maxSeconds != null
-                            ? `Duración definida en la carta (${card.minSeconds ?? data.defMin}s – ${card.maxSeconds ?? data.defMax}s)`
-                            : `Tiempo al azar · ${data.defMin}s – ${data.defMax}s`}
-                        </p>
-                      </div>
-                      <Play className="h-5 w-5 shrink-0 self-center text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </div>
-                  </motion.div>
-                ),
-              )}
-            </AnimatePresence>
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-xs uppercase tracking-widest text-stone-500">Tu mano ({hand.length})</p>
+        {room.extraPlays > 0 && <span className="text-[10px] bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded-full border border-amber-400/20">Doble acción activa</span>}
+      </div>
+
+      <div className="space-y-2.5">
+        <AnimatePresence>
+          {hand.map((card) => (
+            <motion.div key={card.uid} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }}>
+              <button
+                onClick={() => myTurn && !room.currentCard && handlePlay(card)}
+                disabled={!myTurn || !!room.currentCard}
+                className={`w-full text-left rounded-2xl border p-4 transition-all ${
+                  myTurn && !room.currentCard
+                    ? "border-stone-700 bg-stone-900/60 hover:border-amber-500/30 hover:bg-stone-800/60 active:scale-[0.98]"
+                    : "border-stone-800/60 bg-stone-900/30 opacity-60 cursor-not-allowed"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[15px] text-stone-200 leading-snug">
+                      {card.kind === "special" ? SPECIAL_BY_UID[card.uid]?.title ?? card.uid : card.text}
+                    </p>
+                    {card.kind === "action" && (card.minSeconds != null || card.maxSeconds != null) && (
+                      <p className="text-[11px] text-stone-500 mt-1">
+                        {card.minSeconds != null && card.maxSeconds != null
+                          ? `${card.minSeconds}s – ${card.maxSeconds}s`
+                          : card.minSeconds != null
+                          ? `Min ${card.minSeconds}s`
+                          : `Max ${card.maxSeconds}s`}
+                      </p>
+                    )}
+                    {card.kind === "special" && (
+                      <p className="text-[11px] text-amber-400/70 mt-1">{SPECIAL_BY_UID[card.uid]?.description}</p>
+                    )}
+                  </div>
+                  {card.kind === "special" && <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />}
+                </div>
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {hand.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-stone-700/60 p-5 text-center">
+            <p className="text-sm text-stone-500">Sin cartas en mano</p>
           </div>
         )}
-        {error && <p className="text-sm text-rose-400 mt-4">{error}</p>}
       </div>
-    );
-  }
 
-  // ---------- turno de la pareja ----------
-  return (
-    <div className="mx-auto max-w-xl text-center pt-24">
-      <motion.div {...fadeUp}>
-        <span className="chip mb-6">
-          <Hourglass className="h-3 w-3" />
-          Espera…
-        </span>
-        <p className="font-display text-4xl font-semibold mb-3">
-          Turno de{" "}
-          <span className={`italic ${accentText(other(data.myRole))}`}>
-            {name(other(data.myRole))}
-          </span>
-        </p>
-        <p className="text-muted-foreground max-w-xs mx-auto">
-          Tu pareja está eligiendo una carta para ti. No mires su móvil…
-        </p>
-      </motion.div>
+      {myTurn && !room.currentCard && hand.length > 0 && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4">
+          <Button onClick={handleSkip} variant="outline" className="w-full rounded-xl border-stone-800 text-stone-500 hover:text-stone-300">
+            <SkipForward className="w-4 h-4 mr-1.5" /> Pasar turno
+          </Button>
+        </motion.div>
+      )}
     </div>
   );
 }
