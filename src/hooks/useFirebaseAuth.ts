@@ -1,28 +1,27 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { auth } from "@/lib/firebase";
-import { signInAnonymously, onAuthStateChanged, type User } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged, type User } from "firebase/auth";
 
 export function useFirebaseAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      if (u) {
-        setUser(u);
-        setIsLoading(false);
-      } else {
-        try {
-          const cred = await signInAnonymously(auth);
-          setUser(cred.user);
-        } catch (e) {
-          console.error("Auth error:", e);
-        }
-        setIsLoading(false);
-      }
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsLoading(false);
     });
     return unsub;
   }, []);
 
-  return { user, isLoading, isAuthenticated: !!user };
+  const signInWithGoogle = useCallback(async () => {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await auth.signOut();
+  }, []);
+
+  return { user, isLoading, isAuthenticated: !!user, signInWithGoogle, signOut };
 }
