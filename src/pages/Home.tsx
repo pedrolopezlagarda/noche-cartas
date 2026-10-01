@@ -1,14 +1,11 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { trpc } from "@/providers/trpc";
-import { useDemoCards } from "@/hooks/useDemoCards";
 import { Button } from "@/components/ui/button";
-
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-
 import { Clock, Crown, Heart, Layers, Pencil, Plus, RefreshCw, Sparkles, Trash2, Zap, type LucideIcon } from "lucide-react";
 
 const SPECIALS_INFO: { title: string; description: string; icon: LucideIcon }[] = [
@@ -41,14 +38,7 @@ const deckMeta: Record<Deck, { label: string; who: string; icon: typeof Crown; a
 };
 
 export default function Home() {
-  const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
-
-  // Demo mode: cartas persistidas en localStorage
-  const demo = useDemoCards();
-
-  const trpcCards = trpc.cards.list.useQuery(undefined, { enabled: !IS_DEMO });
-  const cards = IS_DEMO ? demo.cards : (trpcCards.data ?? []);
-  const isLoading = IS_DEMO ? false : trpcCards.isLoading;
+  const { data: cards = [], isLoading } = trpc.cards.list.useQuery();
   const utils = trpc.useUtils();
 
   const [activeDeck, setActiveDeck] = useState<Deck>("el");
@@ -60,8 +50,6 @@ export default function Home() {
   const [text, setText] = useState("");
   const [minSec, setMinSec] = useState("");
   const [maxSec, setMaxSec] = useState("");
-
-  const invalidate = () => utils.cards.list.invalidate();
 
   const openNew = () => {
     setEditing(null);
@@ -81,10 +69,9 @@ export default function Home() {
     setDialogOpen(true);
   };
 
-  // Mutaciones reales (solo en modo no-demo)
-  const createMutation = trpc.cards.create.useMutation({ onSuccess: invalidate });
-  const updateMutation = trpc.cards.update.useMutation({ onSuccess: invalidate });
-  const deleteMutation = trpc.cards.delete.useMutation({ onSuccess: invalidate });
+  const createMutation = trpc.cards.create.useMutation({ onSuccess: () => utils.cards.list.invalidate() });
+  const updateMutation = trpc.cards.update.useMutation({ onSuccess: () => utils.cards.list.invalidate() });
+  const deleteMutation = trpc.cards.delete.useMutation({ onSuccess: () => utils.cards.list.invalidate() });
 
   const handleSave = () => {
     const trimmed = text.trim();
@@ -97,18 +84,8 @@ export default function Home() {
     if (min != null && max != null && min > max) { setError("El mínimo no puede ser mayor que el máximo."); return; }
 
     const payload = { deck: activeDeck, text: trimmed, minSeconds: min, maxSeconds: max };
+    const onDone = () => { setDialogOpen(false); utils.cards.list.invalidate(); };
 
-    if (IS_DEMO) {
-      if (editing) {
-        demo.update(editing.id, payload);
-      } else {
-        demo.create(payload);
-      }
-      setDialogOpen(false);
-      return;
-    }
-
-    const onDone = () => { setDialogOpen(false); invalidate(); };
     if (editing) {
       updateMutation.mutate({ ...payload, id: editing.id }, { onSuccess: onDone });
     } else {
@@ -117,10 +94,6 @@ export default function Home() {
   };
 
   const handleDelete = (id: number) => {
-    if (IS_DEMO) {
-      demo.remove(id);
-      return;
-    }
     deleteMutation.mutate({ id });
   };
 
@@ -218,24 +191,18 @@ export default function Home() {
         <p className="text-xs text-muted-foreground mt-4">No tienen temporizador: aplican su efecto al instante y vuelven al fondo del mazo.</p>
       </motion.div>
 
-      {/* Modal de edición/creación manual (bottom-sheet con scroll propio para móvil) */}
+      {/* Modal de edición/creación (bottom-sheet) */}
       {dialogOpen && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center sm:items-center p-0 sm:p-4"
           style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
           onClick={(e) => { if (e.target === e.currentTarget) setDialogOpen(false); }}
         >
-          <div
-            className="card-luxe rounded-t-2xl sm:rounded-2xl border-0 w-full max-w-md max-h-[85dvh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header fijo */}
+          <div className="card-luxe rounded-t-2xl sm:rounded-2xl border-0 w-full max-w-md max-h-[85dvh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="p-5 pb-3 shrink-0">
               <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-muted-foreground/30 sm:hidden" />
               <h3 className="font-display text-2xl sm:text-3xl">{editing ? "Editar carta" : "Nueva carta"}</h3>
             </div>
-
-            {/* Contenido scrolleable */}
             <div className="flex-1 overflow-y-auto px-5 pb-2 space-y-5">
               <div className="space-y-2">
                 <Label htmlFor="card-text" className="text-muted-foreground">Acción · {meta.label}</Label>
@@ -255,35 +222,24 @@ export default function Home() {
               <p className="text-xs text-muted-foreground leading-relaxed">Si las dejas vacías, la partida usará su rango por defecto (10 segundos – 5 minutos, ajustable al empezar).</p>
               {error && <p className="text-sm text-rose-400">{error}</p>}
             </div>
-
-            {/* Footer fijo */}
             <div className="p-5 pt-3 shrink-0 flex justify-end gap-2 border-t border-border/40">
               <Button variant="ghost" className="rounded-full" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-              <Button onClick={handleSave} disabled={!IS_DEMO && (createMutation.isPending || updateMutation.isPending)}
+              <Button onClick={handleSave} disabled={createMutation.isPending || updateMutation.isPending}
                 className="rounded-full px-6 bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 border-0">Guardar</Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal de confirmación manual (sin AlertDialog de Radix que deja el overlay pillado) */}
+      {/* Modal de confirmación eliminar */}
       {deleting && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backgroundColor: "rgba(0,0,0,0.6)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setDeleting(null); }}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.6)" }} onClick={(e) => { if (e.target === e.currentTarget) setDeleting(null); }}>
           <div className="card-luxe rounded-2xl border-0 max-w-md w-full p-6">
             <h3 className="font-display text-2xl mb-1">¿Eliminar esta carta?</h3>
             <p className="text-sm text-muted-foreground mb-6">Esta acción no se puede deshacer.</p>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" className="rounded-full" onClick={() => setDeleting(null)}>Cancelar</Button>
-              <Button
-                className="rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => { handleDelete(deleting.id); setDeleting(null); }}
-              >
-                Eliminar
-              </Button>
+              <Button className="rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => { handleDelete(deleting.id); setDeleting(null); }}>Eliminar</Button>
             </div>
           </div>
         </div>

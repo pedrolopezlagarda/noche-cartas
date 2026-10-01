@@ -6,8 +6,8 @@
 
 ## Versión guardada
 
-- **Version ID**: `565e7e3` (persistencia localStorage)
-- **NUEVA Version ID**: `PENDIENTE` (SQLite + backend real + salas online)
+- **Version ID**: `565e7e3` (persistencia localStorage, demo mode)
+- **Version ID**: `a46ff4a` (SQLite + backend real + salas online)
 - Para recuperar: usa el rollback en el panel de versiones de Kimi con el ID correspondiente.
 
 ---
