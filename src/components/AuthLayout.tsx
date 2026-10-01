@@ -1,7 +1,7 @@
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/const";
-import { Heart, LogOut, Spade } from "lucide-react";
+import { Heart, LogOut, Spade, Wifi } from "lucide-react";
 import { type ReactNode, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { AuthLayoutSkeleton } from "./AuthLayoutSkeleton";
@@ -9,6 +9,7 @@ import { AuthLayoutSkeleton } from "./AuthLayoutSkeleton";
 const tabs = [
   { icon: Spade, label: "Cartas", path: "/" },
   { icon: Heart, label: "Jugar", path: "/juego" },
+  { icon: Wifi, label: "Sala", path: "/sala" },
 ];
 
 export default function AuthLayout({ children }: { children: ReactNode }) {

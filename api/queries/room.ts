@@ -134,9 +134,10 @@ export async function createRoom(
   const inserted = await getDb()
     .insert(schema.rooms)
     .values({ code, status: "lobby", defMin, defMax })
-    .$returningId();
+    .returning({ id: schema.rooms.id });
+  const roomId = inserted[0].id;
   await getDb().insert(schema.roomPlayers).values({
-    roomId: inserted[0].id,
+    roomId,
     userId,
     role,
     hand: JSON.stringify(hands[role]),
@@ -145,7 +146,7 @@ export async function createRoom(
   // El otro rol queda también preparado con las cartas del creador
   const otherRole = other(role);
   await getDb().insert(schema.roomPlayers).values({
-    roomId: inserted[0].id,
+    roomId,
     userId,
     role: otherRole,
     hand: JSON.stringify([]),

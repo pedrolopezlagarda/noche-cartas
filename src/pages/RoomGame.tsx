@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,10 +92,13 @@ function useCountdown(timerEnd: number | null, onDone: () => void) {
 }
 
 export default function RoomGame() {
-  const [code, setCode] = useState<string>(() =>
-    localStorage.getItem(STORAGE_KEY) ?? "",
-  );
-  const [joinInput, setJoinInput] = useState("");
+  const { code: urlCode } = useParams<{ code?: string }>();
+  const [code, setCode] = useState<string>(() => {
+    const fromUrl = urlCode?.trim() ?? "";
+    if (fromUrl.length >= 4) return fromUrl.toUpperCase();
+    return localStorage.getItem(STORAGE_KEY) ?? "";
+  });
+  const [joinInput, setJoinInput] = useState(urlCode?.trim() ?? "");
   const [createRole, setCreateRole] = useState<Role>("el");
   const [defMin, setDefMin] = useState("10");
   const [defMax, setDefMax] = useState("300");
