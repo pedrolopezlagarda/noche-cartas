@@ -8,47 +8,45 @@
 
 - **Version ID**: `565e7e3` (persistencia localStorage, demo mode)
 - **Version ID**: `a46ff4a` (SQLite + backend real + salas online)
+- **Version ID**: `32d8720` (SQLite gratuito + auth automático + salas online)
 - Para recuperar: usa el rollback en el panel de versiones de Kimi con el ID correspondiente.
 
 ---
 
 ## Qué funciona ahora mismo
 
-### Frontend (preview estático)
+### Todo funciona con backend real (gratuito)
 1. **Layout móvil completo**: Header arriba, bottom nav (Cartas / Jugar / Sala), contenido centrado
-2. **Editor de cartas**:
+2. **Auth automático**: entras y ya tienes usuario, sin configurar OAuth
+3. **Editor de cartas** (guardado en SQLite gratuito):
    - Mazos empiezan vacíos (el usuario crea sus propias cartas)
-   - Crear carta: bottom-sheet modal desde abajo, con scroll interno
-   - Editar carta: mismo modal
-   - Eliminar carta: confirmación manual sin bloqueos
+   - Crear/editar/eliminar cartas: guardadas en BD real
    - Tabs por mazo: "Mazo de Él" (lo que hará Ella) / "Mazo de Ella" (lo que hará Él)
-3. **Persistencia demo**: las cartas se guardan en `localStorage` y sobreviven entre páginas y recargas
-4. **Cartas especiales**: visibles como referencia (Roba dos, Doble acción, Manos nuevas)
-5. **Navegación**: fluida entre editor (`/`), juego local (`/juego`) y salas (`/sala`)
-
-### Backend (requiere `npm run dev`)
-6. **Base de datos SQLite**: persistencia real de usuarios, cartas y salas
-7. **Salas online**: crear sala con código, unirse, jugar con dos móviles
-8. **OAuth Kimi**: autenticación real (necesita credenciales válidas)
-9. **tRPC API completa**: auth, cards (CRUD), room (crear/unir/jugar/finalizar)
+4. **Juego local** (`/juego`): un móvil, pasáis el teléfono
+5. **Salas online** (`/sala`): dos móviles con código de sala
+   - Uno crea sala → obtiene código de 4 letras
+   - El otro introduce el código → se unen
+   - Juegan en tiempo real con polling cada 1.2s
+6. **Cartas especiales**: Roba dos, Doble acción, Manos nuevas
+7. **Base de datos SQLite**: archivo local `db.sqlite`, cero costos
 
 ---
 
-## Archivos clave modificados en la última sesión (SQLite + backend real)
+## Archivos clave modificados en la última sesión (SQLite gratuito + auth automático)
 
 | Archivo | Cambio |
 |---------|--------|
-| `db/schema.ts` | Migrado de MySQL a SQLite (sqliteTable, integer, text) |
-| `db/relations.ts` | Vacío (no se usan relaciones complejas) |
-| `drizzle.config.ts` | Dialect sqlite, URL por defecto `file:./db.sqlite` |
-| `api/queries/connection.ts` | Usa `@libsql/client` en vez de `mysql2` |
-| `api/queries/users.ts` | `onConflictDoUpdate` en vez de `onDuplicateKeyUpdate` |
-| `api/queries/room.ts` | `.returning()` en vez de `$returningId()` |
-| `src/App.tsx` | Añadida ruta `/sala/:code?` → `RoomGame` |
-| `src/components/AuthLayout.tsx` | Añadida pestaña "Sala" en bottom nav |
-| `src/pages/RoomGame.tsx` | Lee código de URL params + localStorage |
-| `.env` | Creado con `DATABASE_URL=file:./db.sqlite` |
-| `package.json` | Eliminado `mysql2`, añadido `@libsql/client` |
+| `db/schema.ts` | SQLite: users, cards, rooms, roomPlayers |
+| `api/dev-auth-router.ts` | Auth automático sin OAuth (crea usuario demo) |
+| `api/router.ts` | Registrado `devAuth` router |
+| `src/hooks/useAuth.ts` | Intenta `auth.me`, si falla llama `devAuth.autoLogin` |
+| `src/pages/Home.tsx` | Usa BD real vía tRPC (eliminado demo mode) |
+| `src/pages/Juego.tsx` | Usa BD real vía tRPC (eliminado demo mode) |
+| `src/main.tsx` | Simplificado, sin lógica de demo mode |
+| `src/lib/demoData.ts` | Eliminado |
+| `src/lib/demoFetch.ts` | Eliminado |
+| `src/hooks/useDemoCards.ts` | Eliminado |
+| `.env` | `DATABASE_URL=file:./db.sqlite` |
 
 ---
 
@@ -60,61 +58,56 @@
 cd /mnt/agents/output/app
 npm install
 
-# 1. Crear base de datos SQLite
+# 1. Crear base de datos SQLite (gratuita)
 npm run db:push
 
-# 2. Desarrollo con backend real (servidor Hono en http://localhost:3000)
+# 2. Desarrollo con backend real (servidor en http://localhost:3000)
 npm run dev
-
-# 3. Preview estático sin backend (modo demo)
-VITE_DEMO_MODE=true npm run dev
 ```
 
 ### Variables de entorno (archivo `.env`)
 
 ```env
-# ── Backend ─────────────────────────────────────────────────────
-APP_ID=tu_app_id
-APP_SECRET=tu_app_secret
-
-# ── Database ───────────────────────────────────────────────────
+# ── Database (SQLite gratuita) ─────────────────────────────────
 DATABASE_URL=file:./db.sqlite
 
-# ── Frontend (expuesto al navegador por Vite) ───────────────────
-VITE_KIMI_AUTH_URL=https://auth.kimi.com
-VITE_APP_ID=tu_app_id
+# ── Auth (automático, no necesitas OAuth para probar) ──────────
+APP_ID=demo
+APP_SECRET=demo_secret
 
-# ── Backend (Auth) ─────────────────────────────────────────────
+# ── Frontend ───────────────────────────────────────────────────
+VITE_KIMI_AUTH_URL=https://auth.kimi.com
+VITE_APP_ID=demo
+
+# ── Backend ────────────────────────────────────────────────────
 KIMI_AUTH_URL=https://auth.kimi.com
 KIMI_OPEN_URL=https://open.kimi.com
-
-# ── Admin Role ──────────────────────────────────────────────────
-OWNER_UNION_ID=tu_union_id
 ```
 
 ---
 
 ## Pendientes prioritarios
 
-1. [x] **Migrar a SQLite**: Hecho. Base de datos funciona con `file:./db.sqlite`
-2. [x] **Ruta RoomGame**: Hecho. Ruta `/sala/:code?` añadida en `App.tsx`
-3. [ ] **Configurar OAuth real**: Obtener `APP_ID` y `APP_SECRET` de Kimi Portal
-4. [ ] **Deploy backend en servidor**: El frontend estático no ejecuta el backend. Necesitas un VPS (Railway, Render, Fly.io) o ejecutar `npm start` en un servidor.
-5. [ ] **Test en móvil real**: Verificar salas con dos móviles en la misma red WiFi
-6. [ ] **Sonidos y vibración**: Asegurar que funcionan en producción
-7. [ ] **WebSockets (opcional)**: Actualmente las salas usan polling cada 1.2s. WebSockets daría sincronización instantánea.
+1. [x] **SQLite gratuito**: Hecho. Base de datos en archivo local `db.sqlite`
+2. [x] **Auth automático**: Hecho. Sin necesidad de OAuth para probar
+3. [x] **Salas online**: Hecho. Dos móviles con código de sala
+4. [ ] **Test en móvil real**: Verificar salas con dos móviles en la misma red WiFi
+5. [ ] **Sonidos y vibración**: Asegurar que funcionan en producción
+6. [ ] **WebSockets (opcional)**: Actualmente las salas usan polling cada 1.2s
+7. [ ] **Deploy en servidor**: Para jugar online fuera de la WiFi local (Railway, Render, Fly.io free tier)
 
 ---
 
 ## Notas para el siguiente agente
 
 - El proyecto usa **React 19 + Vite + Tailwind v3 + shadcn/ui**
-- La autenticación es OAuth de Kimi (cookie `kimi_sid`)
-- El backend es tRPC con Drizzle ORM sobre MySQL
-- **Demo mode**: activado con `VITE_DEMO_MODE=true`. Usa estado local en vez de tRPC.
+- **Auth**: automático vía `devAuth.autoLogin`. Crea usuario demo si no hay sesión.
+- Para OAuth real: configurar `APP_ID` y `APP_SECRET` de Kimi Portal.
+- El backend es tRPC con Drizzle ORM sobre **SQLite** (gratuito)
+- Base de datos: archivo `db.sqlite` local, cero costos
 - Los mazos deben empezar vacíos. NO añadir cartas de ejemplo.
-- Los modales de creación/edición son **bottom-sheets manuales** (no usan Dialog de shadcn/ui)
-- El modal de eliminación es **manual** (no usa AlertDialog de shadcn/ui)
+- Los modales de creación/edición son **bottom-sheets manuales**
+- El modal de eliminación es **manual** (no usa AlertDialog)
 - Todas las animaciones usan Framer Motion
 - El tema es oscuro forzado
 

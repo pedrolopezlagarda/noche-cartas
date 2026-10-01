@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { setCookie } from "hono/cookie";
+import * as cookie from "cookie";
 import * as schema from "@db/schema";
 import { getDb } from "./queries/connection";
 import { createRouter, publicQuery } from "./middleware";
@@ -37,11 +37,17 @@ export const devAuthRouter = createRouter({
       clientId: env.appId || "demo",
     });
 
-    const cookieOpts = getSessionCookieOptions(ctx.req.headers);
-    setCookie(ctx.resHeaders as unknown as Parameters<typeof setCookie>[0], Session.cookieName, token, {
-      ...cookieOpts,
-      maxAge: Session.maxAgeMs / 1000,
-    });
+    const opts = getSessionCookieOptions(ctx.req.headers);
+    ctx.resHeaders.append(
+      "set-cookie",
+      cookie.serialize(Session.cookieName, token, {
+        httpOnly: opts.httpOnly,
+        path: opts.path,
+        sameSite: opts.sameSite?.toLowerCase() as "lax" | "none",
+        secure: opts.secure,
+        maxAge: Session.maxAgeMs / 1000,
+      }),
+    );
 
     return { user };
   }),
